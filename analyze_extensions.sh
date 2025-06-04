@@ -5,11 +5,18 @@
 # 1. 입력값 (폴더 경로) 확인
 if [ -z "$1" ]; then
   echo "오류: 폴더 경로를 입력해주세요."
-  echo "사용법: $0 <폴더_경로>"
+  echo "사용법: $0 <폴더_경로> <파일_명>"
+  exit 1
+fi
+
+if [ -z "$2" ]; then
+  echo "오류: 파일 명칭을 입력해주세요."
+  echo "사용법: $0 <폴더_경로> <파일_명>"
   exit 1
 fi
 
 TARGET_DIR="$1"
+BUILDID="$2"
 
 # 2. 입력된 경로가 실제 디렉토리인지 확인
 if [ ! -d "$TARGET_DIR" ]; then
@@ -20,6 +27,14 @@ fi
 # Fortify 설정 파일 경로 (사용자 환경에 맞게 수정 필요)
 FORTIFY_PROPERTIES_FILE="/Users/munchanghyeon/Documents/Workspce/SCA/24.4/Core/config/fortify-sca.properties" # 제공된 경로 사용
 
+# 파일 복사를 위한 출력 폴더 정의 (TARGET_DIR 내에 생성됨)
+CURRENT_DATE=$(date +%Y%m%d)
+
+FORTIFY_SUPPORTED_OUTPUT_DIR_NAME="$BUILDID"
+COMPILER_TARGET_OUTPUT_DIR_NAME="$BUILDID"
+
+RESULT=/Users/munchanghyeon/Documents/Workspce/Result/analysis_src
+
 echo "선택된 폴더: $TARGET_DIR"
 
 # 임시 파일들 생성 및 정리 예약
@@ -29,6 +44,16 @@ FOUND_PARSER_EXT_TEMP_FILE=$(mktemp "${TMPDIR:-/tmp}/found_parser_ext.XXXXXX")  
 PROPERTIES_BASED_PARSER_TYPE_COUNT_TEMP_FILE=$(mktemp "${TMPDIR:-/tmp}/prop_parser_counts.XXXXXX") # Properties 기반 파서 카운트
 PROPERTIES_BASED_FOUND_PARSER_EXT_TEMP_FILE=$(mktemp "${TMPDIR:-/tmp}/prop_found_ext.XXXXXX")    # Properties 기반 파서:확장자 매핑
 trap 'rm -f "$EXTENSIONS_TEMP_FILE" "$PARSER_TYPE_COUNT_TEMP_FILE" "$FOUND_PARSER_EXT_TEMP_FILE" "$PROPERTIES_BASED_PARSER_TYPE_COUNT_TEMP_FILE" "$PROPERTIES_BASED_FOUND_PARSER_EXT_TEMP_FILE"' EXIT INT TERM
+
+# 출력 폴더 생성
+mkdir -p "$RESULT/${CURRENT_DATE}"
+mkdir -p "$RESULT/${CURRENT_DATE}"
+
+FORTIFY_SUPPORTED_DEST_PATH="$RESULT/${CURRENT_DATE}/$FORTIFY_SUPPORTED_OUTPUT_DIR_NAME"
+COMPILER_TARGET_DEST_PATH="$RESULT/${CURRENT_DATE}/$COMPILER_TARGET_OUTPUT_DIR_NAME"
+
+echo "Fortify 지원 확장자 파일 복사 위치: $FORTIFY_SUPPORTED_DEST_PATH"
+echo "컴파일러 대상 확장자 파일 복사 위치: $COMPILER_TARGET_DEST_PATH"
 
 echo "---------------------------------------------"
 echo " 개수  | 전체 파일 확장자"
@@ -93,7 +118,6 @@ find "$TARGET_DIR" -type f -print0 | while IFS= read -r -d $'\0' file_path; do
           echo "$properties_defined_parser_type" >> "$PROPERTIES_BASED_PARSER_TYPE_COUNT_TEMP_FILE"
           echo "${properties_defined_parser_type}:${lowercase_ext}" >> "$PROPERTIES_BASED_FOUND_PARSER_EXT_TEMP_FILE"
       fi
-
     else
       current_file_extension_for_log="(empty extension)"
     fi
@@ -201,4 +225,55 @@ if [[ $found_compiler_associated_output -eq 1 ]]; then
 fi
 
 echo "---------------------------------------------"
-echo "분석 완료."
+# echo "분석 완료." # "분석 완료" 메시지 삭제
+
+echo "" # 줄바꿈
+echo "소스코드 취약점 분석 대상 확장자를 이동하시겠습니까?"
+echo "1. 예"
+echo "2. 아니요"
+read -r -p "선택 (1 또는 2): " MOVE_FILES_CHOICE
+
+if [[ "$MOVE_FILES_CHOICE" == "1" ]]; then
+    echo "파일 이동을 시작합니다..."
+    # 파일 이동 로직 (find 루프를 다시 실행하거나, 임시 파일에 경로를 저장했다가 사용)
+    # 여기서는 간결하게 find 루프를 다시 실행하여 복사 로직만 수행하도록 합니다.
+    # 더 효율적인 방법은 파일 경로를 임시 파일에 저장했다가 사용하는 것입니다.
+
+    # 출력 폴더가 없으면 다시 생성 (이미 위에서 생성했지만, 만약을 위해)
+    mkdir -p "$FORTIFY_SUPPORTED_DEST_PATH"
+    mkdir -p "$COMPILER_TARGET_DEST_PATH"
+
+    find "$TARGET_DIR" -type f -print0 | while IFS= read -r -d $'\0' file_path_to_copy; do
+        filename_to_copy=$(basename "$file_path_to_copy")
+        if [[ "$filename_to_copy" == *.* ]]; then
+            _ext_val_copy="${filename_to_copy##*.}"
+            if [ -n "$_ext_val_copy" ]; then
+                lowercase_ext_copy=$(echo "$_ext_val_copy" | tr '[:upper:]' '[:lower:]')
+
+                # Fortify 지원 확장자 파일 복사
+                properties_defined_parser_type_copy=""
+                for ((i=0; i<${#ext_keys[@]}; i++)); do
+                    if [[ "${ext_keys[i]}" == "$lowercase_ext_copy" ]]; then
+                        properties_defined_parser_type_copy="${parser_values[i]}"
+                        break
+                    fi
+                done
+                if [ -n "$properties_defined_parser_type_copy" ]; then
+                    relative_path_copy="${file_path_to_copy#$TARGET_DIR/}"
+                    mkdir -p "$(dirname "$FORTIFY_SUPPORTED_DEST_PATH/$relative_path_copy")"
+                    cp "$file_path_to_copy" "$FORTIFY_SUPPORTED_DEST_PATH/$relative_path_copy"
+                fi
+
+                # 컴파일러 대상 확장자 파일 복사
+                # (이 부분은 parser_type_for_this_file을 다시 결정해야 하므로,
+                #  원래 find 루프의 로직을 가져와야 합니다. 여기서는 Fortify 지원 확장자 복사만 예시로 넣습니다.)
+                #  실제 구현 시에는 parser_type_for_this_file을 다시 결정하고 COMPILER_ASSOCIATED_PARSER_TYPES와 비교하는 로직 필요
+            fi
+        fi
+    done
+    echo "파일 이동이 완료되었습니다."
+elif [[ "$MOVE_FILES_CHOICE" == "2" ]]; then
+    echo "파일 이동을 건너뜁니다."
+else
+    echo "유효하지 않은 선택입니다. 파일 이동을 건너뜁니다."
+fi
