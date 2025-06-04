@@ -14,6 +14,24 @@ import java.net.InetSocketAddress;
 public class JavaWebApp {
     public static void main(String[] args) throws Exception {
         int port = 8080;
+        // Allow configuring the port via command line argument or PORT env var
+        if (args.length > 0) {
+            try {
+                port = Integer.parseInt(args[0]);
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid port argument, falling back to default 8080");
+            }
+        } else {
+            String portEnv = System.getenv("PORT");
+            if (portEnv != null) {
+                try {
+                    port = Integer.parseInt(portEnv);
+                } catch (NumberFormatException e) {
+                    System.err.println("Invalid PORT environment variable, using default 8080");
+                }
+            }
+        }
+
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/", new RootHandler());
         server.setExecutor(null); // use default executor
